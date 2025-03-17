@@ -245,6 +245,12 @@ const LiveMonitor = () => {
     return timestamp;
   };
 
+  // Handler for the new button
+  const handlePredictRugpool = () => {
+    console.log("Predict Current Rugpull button clicked");
+    // TODO: Implement prediction logic here
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header with improved UI */}
@@ -313,6 +319,16 @@ const LiveMonitor = () => {
                     </span>
                   </div>
                 </div>
+              </div>
+
+              {/* New Button for Predicting Rugpool */}
+              <div className="p-3 border-b border-gray-100">
+                <button
+                  className="w-full bg-indigo-500 hover:bg-indigo-600 text-white py-2 px-4 rounded-md font-medium transition-colors"
+                  onClick={handlePredictRugpool}
+                >
+                  Predict Current Rugpool
+                </button>
               </div>
 
               <div className="p-5">
