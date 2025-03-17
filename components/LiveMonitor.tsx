@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useEffect, useState } from "react";
 import {
   Clock,
   Database,
   TrendingUp,
-  AlertCircle,
   DollarSign,
+  RefreshCw,
+  Info,
 } from "lucide-react";
 import {
   LineChart,
@@ -19,12 +20,13 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
-const API_KEY = process.env.NEXT_PUBLIC_ETHERSCAN_API_KEY; // Store API Key in .env.local
+const API_KEY = process.env.NEXT_PUBLIC_ETHERSCAN_API_KEY;
 
 interface GasPriceInfo {
   value: string;
   label: string;
   color: string;
+  bgColor: string;
 }
 
 interface GasPrices {
@@ -38,29 +40,59 @@ interface HistoricalData {
   fast: number;
 }
 
+interface TransactionType {
+  label: string;
+  gasLimit: number;
+  description: string;
+}
+
 const LiveMonitor = () => {
   const [gasPrices, setGasPrices] = useState<GasPrices | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [historicalData, setHistoricalData] = useState<HistoricalData[]>([]);
   const [savingsEstimate, setSavingsEstimate] = useState<number>(0);
+  const [savingsInUsd, setSavingsInUsd] = useState<number>(0);
   const [optimalTime, setOptimalTime] = useState<string>("");
   const [transactionComplexity, setTransactionComplexity] =
     useState<string>("average");
+  const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [ethPrice, setEthPrice] = useState<number>(0);
 
-  // Memoize the gasLimits object so that its reference remains stable between renders
-  const gasLimits = useMemo(
+  // Transaction types with descriptions
+  const transactionTypes = useMemo<Record<string, TransactionType>>(
     () => ({
-      simple: 21000, // Simple ETH transfer
-      average: 100000, // Token transfer or simple contract interaction
-      complex: 250000, // Complex smart contract interaction
-      nft: 200000, // NFT minting
-      defi: 350000, // DeFi operations like swaps
+      simple: {
+        label: "Simple ETH Transfer",
+        gasLimit: 21000,
+        description: "Basic transaction to send ETH between wallets",
+      },
+      average: {
+        label: "Token Transfer",
+        gasLimit: 100000,
+        description: "ERC-20 token transfers or simple contract interactions",
+      },
+      complex: {
+        label: "Complex Contract",
+        gasLimit: 250000,
+        description:
+          "Advanced smart contract interactions with multiple operations",
+      },
+      nft: {
+        label: "NFT Minting",
+        gasLimit: 200000,
+        description: "Creating or transferring NFTs (ERC-721/ERC-1155)",
+      },
+      defi: {
+        label: "DeFi Operation",
+        gasLimit: 350000,
+        description: "Token swaps, liquidity operations, or yield farming",
+      },
     }),
     []
   );
 
-  // Memoized function to update historical data
+  // Update historical data
   const updateHistoricalData = useCallback(
     (safe: number, average: number, fast: number) => {
       const now = new Date();
@@ -81,17 +113,18 @@ const LiveMonitor = () => {
     []
   );
 
-  // Memoized function to calculate potential savings and determine optimal transaction time
+  // Calculate savings
   const calculateSavingsEstimate = useCallback(
     (fastPrice: number, safePrice: number) => {
       const gasLimit =
-        gasLimits[transactionComplexity as keyof typeof gasLimits];
+        transactionTypes[transactionComplexity]?.gasLimit || 21000;
       const fastCost = (fastPrice * gasLimit) / 1e9; // Convert to ETH
       const safeCost = (safePrice * gasLimit) / 1e9; // Convert to ETH
       const savings = fastCost - safeCost;
       setSavingsEstimate(savings);
+      setSavingsInUsd(savings * ethPrice);
 
-      // Determine optimal time based on current hour (simplified placeholder)
+      // Determine optimal time based on current hour
       const now = new Date();
       const hour = now.getHours();
       if (hour >= 0 && hour < 6) {
@@ -104,13 +137,33 @@ const LiveMonitor = () => {
         setOptimalTime("Tomorrow (midnight-6AM)");
       }
     },
-    [transactionComplexity, gasLimits]
+    [transactionComplexity, transactionTypes, ethPrice]
   );
 
-  // Memoized function to fetch gas prices from Etherscan
+  // Fetch ETH price
+  const fetchEthPrice = useCallback(async () => {
+    try {
+      const response = await fetch(
+        `https://api.etherscan.io/api?module=stats&action=ethprice&apikey=${API_KEY}`
+      );
+      const data = await response.json();
+      if (data.status === "1" && data.result) {
+        setEthPrice(parseFloat(data.result.ethusd));
+      }
+    } catch (error) {
+      console.error("Error fetching ETH price:", error);
+    }
+  }, []);
+
+  // Fetch gas prices
   const fetchGasPrices = useCallback(async () => {
     try {
+      setRefreshing(true);
       setLoading(true);
+
+      // Fetch ETH price first
+      await fetchEthPrice();
+
       const response = await fetch(
         `https://api.etherscan.io/api?module=gastracker&action=gasoracle&apikey=${API_KEY}`
       );
@@ -121,22 +174,26 @@ const LiveMonitor = () => {
           "Safe (Low)": {
             value: data.result.SafeGasPrice,
             label: "Gwei",
-            color: "bg-green-100 text-green-800",
+            color: "text-green-800",
+            bgColor: "bg-green-100",
           },
-          "Average (Standard)": {
+          Average: {
             value: data.result.ProposeGasPrice,
             label: "Gwei",
-            color: "bg-blue-100 text-blue-800",
+            color: "text-blue-800",
+            bgColor: "bg-blue-100",
           },
           Fast: {
             value: data.result.FastGasPrice,
             label: "Gwei",
-            color: "bg-purple-100 text-purple-800",
+            color: "text-purple-800",
+            bgColor: "bg-purple-100",
           },
           "Base Fee": {
             value: data.result.suggestBaseFee,
             label: "Gwei",
-            color: "bg-gray-100 text-gray-800",
+            color: "text-gray-800",
+            bgColor: "bg-gray-100",
           },
         };
 
@@ -160,17 +217,20 @@ const LiveMonitor = () => {
       console.error("Error fetching gas prices:", error);
     } finally {
       setLoading(false);
+      setTimeout(() => setRefreshing(false), 500); // Visual feedback
     }
-  }, [calculateSavingsEstimate, updateHistoricalData]);
+  }, [calculateSavingsEstimate, updateHistoricalData, fetchEthPrice]);
 
-  // Fetch data once on page load and every 30 seconds
+  // Initial fetch
   useEffect(() => {
     fetchGasPrices();
-    const interval = setInterval(fetchGasPrices, 30000); // Every 30 seconds
+
+    // Optional: Set up polling for real-time updates
+    const interval = setInterval(fetchGasPrices, 60000); // Update every minute
     return () => clearInterval(interval);
   }, [fetchGasPrices]);
 
-  // Recalculate savings when transaction complexity changes or when gasPrices update
+  // Recalculate savings when necessary
   useEffect(() => {
     if (gasPrices) {
       calculateSavingsEstimate(
@@ -180,192 +240,499 @@ const LiveMonitor = () => {
     }
   }, [transactionComplexity, calculateSavingsEstimate, gasPrices]);
 
+  // Format timestamp for better readability
+  const formatTimestamp = (timestamp: string) => {
+    return timestamp;
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-gradient-to-r from-blue-800 to-indigo-700 text-white px-6 py-4 sm:py-6 shadow-md">
-        <div className="max-w-6xl mx-auto">
-          <h1 className="text-2xl sm:text-3xl font-bold flex items-center">
-            <Database className="mr-3" />
-            Live Monitor
-          </h1>
-          <p className="mt-1 sm:mt-2 text-sm sm:text-base opacity-90">
-            Real-time blockchain activity and network analytics
-          </p>
-        </div>
-      </div>
-
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Gas Price Panel */}
-          <div className="bg-white rounded-lg shadow-md p-5 sm:p-6 h-full">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-lg sm:text-xl font-semibold flex items-center">
-                <Database className="mr-2 text-blue-600" size={20} />
-                Gas Price Monitor
-              </h2>
-              <span className="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full flex items-center">
-                <Clock size={12} className="mr-1" /> Live
-              </span>
+      {/* Header with improved UI */}
+      <div className="bg-gradient-to-r from-blue-700 to-indigo-600 text-white px-6 py-8 shadow-lg">
+        <div className="max-w-7xl mx-auto">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between">
+            <div>
+              <h1 className="text-3xl font-bold flex items-center">
+                <Database className="mr-3" size={28} />
+                Ethereum Gas Tracker
+              </h1>
+              <p className="mt-2 text-base opacity-90 max-w-2xl">
+                Track real-time gas prices, optimize your transactions, and save
+                on fees
+              </p>
             </div>
-
-            {loading && !gasPrices ? (
-              <div className="animate-pulse space-y-3">
-                {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="h-16 bg-gray-200 rounded-md"></div>
-                ))}
-              </div>
-            ) : (
-              <>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {gasPrices &&
-                    Object.entries(gasPrices).map(([key, data]) => (
-                      <div
-                        key={key}
-                        className={`p-4 rounded-lg ${data.color} flex flex-col items-center justify-center text-center`}
-                      >
-                        <div className="text-sm sm:text-base font-medium mb-1">
-                          {key}
-                        </div>
-                        <div className="flex items-baseline">
-                          <span className="text-2xl sm:text-3xl font-bold">
-                            {data.value}
-                          </span>
-                          <span className="ml-1 text-xs sm:text-sm">
-                            {data.label}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                </div>
-
-                {lastUpdated && (
-                  <div className="mt-4 text-xs sm:text-sm text-gray-500 text-center">
-                    Last updated: {lastUpdated.toLocaleTimeString()}
-                  </div>
-                )}
-              </>
-            )}
 
             <button
               onClick={fetchGasPrices}
-              className="mt-4 w-full bg-blue-50 hover:bg-blue-100 text-blue-700 py-2 rounded-md text-sm sm:text-base font-medium transition-colors"
+              disabled={refreshing}
+              className="mt-4 sm:mt-0 bg-white hover:bg-blue-50 text-blue-700 py-2 px-6 rounded-md font-medium transition-colors flex items-center shadow-sm disabled:opacity-75"
             >
-              Refresh Data
+              {refreshing ? (
+                <RefreshCw className="mr-2 animate-spin" size={18} />
+              ) : (
+                <RefreshCw className="mr-2" size={18} />
+              )}
+              Refresh
             </button>
           </div>
 
-          {/* UNIQUE FEATURE: Gas Price Optimizer */}
-          <div className="bg-white rounded-lg shadow-md p-5 sm:p-6 h-full">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-lg sm:text-xl font-semibold flex items-center">
+          <div className="mt-4 bg-blue-600/40 p-3 rounded-lg text-sm">
+            <div className="flex items-start">
+              <Info size={18} className="mr-2 mt-0.5 flex-shrink-0" />
+              <p>
+                This dashboard helps you monitor Ethereum gas prices in
+                real-time and optimize your transaction timing. Compare costs
+                between different speed options and find the best time to
+                execute your transactions.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+          {/* Gas Price Cards - Now in a vertical column */}
+          <div className="lg:col-span-2">
+            <div className="bg-white rounded-xl shadow-md overflow-hidden">
+              <div className="p-5 border-b border-gray-100">
+                <div className="flex justify-between items-center">
+                  <h2 className="text-xl font-semibold flex items-center text-gray-800">
+                    <Database className="mr-2 text-blue-600" size={20} />
+                    Current Gas Prices
+                  </h2>
+                  <div className="flex items-center">
+                    <Clock size={14} className="mr-1 text-blue-500" />
+                    <span className="text-xs text-blue-500 font-medium">
+                      {lastUpdated
+                        ? `Updated ${lastUpdated.toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}`
+                        : "Loading..."}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-5">
+                {loading && !gasPrices ? (
+                  <div className="animate-pulse space-y-4">
+                    {[1, 2, 3, 4].map((i) => (
+                      <div
+                        key={i}
+                        className="h-16 bg-gray-200 rounded-lg"
+                      ></div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {gasPrices &&
+                      Object.entries(gasPrices).map(([key, data]) => (
+                        <div
+                          key={key}
+                          className={`rounded-lg ${data.bgColor} p-4 flex justify-between items-center shadow-sm`}
+                        >
+                          <div className={`font-medium ${data.color}`}>
+                            {key}
+                          </div>
+                          <div className="flex items-baseline">
+                            <span
+                              className={`text-2xl font-bold ${data.color}`}
+                            >
+                              {data.value}
+                            </span>
+                            <span
+                              className={`ml-1 text-sm ${data.color} opacity-80`}
+                            >
+                              {data.label}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Historical Chart moved below gas prices on mobile */}
+            <div className="mt-6 bg-white rounded-xl shadow-md p-5 lg:hidden">
+              <h2 className="text-xl font-semibold mb-4 flex items-center text-gray-800">
                 <TrendingUp className="mr-2 text-indigo-600" size={20} />
-                Gas Price Optimizer
+                Gas Price Trends
               </h2>
-              <span className="bg-indigo-100 text-indigo-800 text-xs px-2 py-1 rounded-full flex items-center">
-                <AlertCircle size={12} className="mr-1" /> Unique Feature
-              </span>
-            </div>
 
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Transaction Type
-              </label>
-              <select
-                value={transactionComplexity}
-                onChange={(e) => setTransactionComplexity(e.target.value)}
-                className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-              >
-                <option value="simple">Simple ETH Transfer (21,000 gas)</option>
-                <option value="average">Token Transfer (100,000 gas)</option>
-                <option value="complex">
-                  Complex Contract Interaction (250,000 gas)
-                </option>
-                <option value="nft">NFT Minting (200,000 gas)</option>
-                <option value="defi">DeFi Operation (350,000 gas)</option>
-              </select>
+              {historicalData.length > 1 ? (
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart
+                      data={historicalData}
+                      margin={{ top: 5, right: 20, left: 0, bottom: 5 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                      <XAxis
+                        dataKey="timestamp"
+                        tickFormatter={formatTimestamp}
+                        tick={{ fontSize: 12 }}
+                      />
+                      <YAxis tick={{ fontSize: 12 }} />
+                      <Tooltip
+                        formatter={(value) => [`${value} Gwei`, ""]}
+                        labelFormatter={(label) => `Time: ${label}`}
+                      />
+                      <Legend />
+                      <Line
+                        type="monotone"
+                        dataKey="safe"
+                        stroke="#10B981"
+                        name="Safe"
+                        strokeWidth={2}
+                        dot={false}
+                        activeDot={{ r: 6 }}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="average"
+                        stroke="#3B82F6"
+                        name="Average"
+                        strokeWidth={2}
+                        dot={false}
+                        activeDot={{ r: 6 }}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="fast"
+                        stroke="#8B5CF6"
+                        name="Fast"
+                        strokeWidth={2}
+                        dot={false}
+                        activeDot={{ r: 6 }}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="flex items-center justify-center h-64 text-gray-500">
+                  <div className="text-center">
+                    <RefreshCw className="animate-spin h-8 w-8 mx-auto mb-3 text-blue-500" />
+                    <p>Collecting data for chart...</p>
+                  </div>
+                </div>
+              )}
             </div>
+          </div>
 
-            <div className="bg-green-50 p-4 rounded-lg border border-green-200 mb-4">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="font-medium text-green-800 flex items-center">
-                  <DollarSign size={16} className="mr-1" />
-                  Potential Savings
-                </h3>
-                <span className="text-xs text-green-600 font-medium">
-                  Fast vs. Safe
-                </span>
+          {/* Optimizer with improved UI - Takes 3 columns on desktop */}
+          <div className="lg:col-span-3">
+            <div className="bg-white rounded-xl shadow-md overflow-hidden">
+              <div className="p-5 border-b border-gray-100">
+                <div className="flex justify-between items-center">
+                  <h2 className="text-xl font-semibold flex items-center text-gray-800">
+                    <TrendingUp className="mr-2 text-indigo-600" size={20} />
+                    Gas Price Optimizer
+                  </h2>
+                  <span className="bg-indigo-100 text-indigo-700 text-xs px-3 py-1 rounded-full font-medium">
+                    Save on gas fees
+                  </span>
+                </div>
               </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-green-700">
-                  {savingsEstimate.toFixed(6)} ETH
-                </div>
-                <div className="text-sm text-green-600 mt-1">
-                  by waiting for lower gas prices
-                </div>
-              </div>
-            </div>
 
-            <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-              <h3 className="font-medium text-blue-800 mb-2">
-                Optimal Transaction Time
-              </h3>
-              <div className="text-center">
-                <div className="text-xl font-bold text-blue-700">
-                  {optimalTime}
+              <div className="p-5">
+                {/* Transaction Type Selector with improved UI */}
+                <div className="mb-6">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Select your transaction type:
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {Object.entries(transactionTypes).map(([key, type]) => (
+                      <button
+                        key={key}
+                        onClick={() => setTransactionComplexity(key)}
+                        className={`p-3 rounded-lg text-left border ${
+                          transactionComplexity === key
+                            ? "border-indigo-500 bg-indigo-50 ring-2 ring-indigo-200"
+                            : "border-gray-200 hover:border-indigo-300 hover:bg-indigo-50/30"
+                        } transition-all`}
+                      >
+                        <div className="font-medium text-gray-800">
+                          {type.label}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          {type.gasLimit.toLocaleString()} gas units
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-2">
+                    {transactionTypes[transactionComplexity]?.description}
+                  </div>
                 </div>
-                <div className="text-sm text-blue-600 mt-1">
-                  based on historical patterns
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Savings Card */}
+                  <div className="bg-gradient-to-br from-green-50 to-emerald-50 p-4 rounded-lg border border-green-100 shadow-sm">
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="font-medium text-green-800 flex items-center">
+                        <DollarSign size={16} className="mr-1" />
+                        Potential Savings
+                      </h3>
+                      <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full">
+                        Fast vs. Safe
+                      </span>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-3xl font-bold text-green-700">
+                        {savingsEstimate.toFixed(6)} ETH
+                      </div>
+                      {ethPrice > 0 && (
+                        <div className="text-sm font-medium text-green-600 mt-1">
+                          ≈ ${savingsInUsd.toFixed(2)} USD
+                        </div>
+                      )}
+                      <div className="text-xs text-green-600 mt-3 bg-green-100/50 p-2 rounded">
+                        You can save this amount by choosing a slower
+                        transaction speed
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Optimal Time Card */}
+                  <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-4 rounded-lg border border-blue-100 shadow-sm">
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="font-medium text-blue-800 flex items-center">
+                        <Clock size={16} className="mr-1" />
+                        Optimal Transaction Time
+                      </h3>
+                      <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full">
+                        Recommendation
+                      </span>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-blue-700">
+                        {optimalTime}
+                      </div>
+                      <div className="mt-3 text-xs text-blue-600 bg-blue-100/50 p-2 rounded">
+                        Gas prices are typically lower during off-peak hours
+                        when network activity decreases
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Transaction Details Box */}
+                <div className="mt-6 bg-gray-50 rounded-lg p-4 border border-gray-200">
+                  <h3 className="font-medium text-gray-700 mb-3">
+                    Transaction Cost Breakdown
+                  </h3>
+                  <div className="space-y-2">
+                    {gasPrices && (
+                      <>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-600">Fast Speed:</span>
+                          <span className="font-medium text-gray-800">
+                            {(
+                              (parseFloat(gasPrices["Fast"].value) *
+                                transactionTypes[transactionComplexity]
+                                  .gasLimit) /
+                              1e9
+                            ).toFixed(6)}{" "}
+                            ETH
+                            {ethPrice > 0 && (
+                              <span className="text-xs text-gray-500 ml-1">
+                                ($
+                                {(
+                                  ((parseFloat(gasPrices["Fast"].value) *
+                                    transactionTypes[transactionComplexity]
+                                      .gasLimit) /
+                                    1e9) *
+                                  ethPrice
+                                ).toFixed(2)}
+                                )
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-600">Average Speed:</span>
+                          <span className="font-medium text-gray-800">
+                            {(
+                              (parseFloat(gasPrices["Average"].value) *
+                                transactionTypes[transactionComplexity]
+                                  .gasLimit) /
+                              1e9
+                            ).toFixed(6)}{" "}
+                            ETH
+                            {ethPrice > 0 && (
+                              <span className="text-xs text-gray-500 ml-1">
+                                ($
+                                {(
+                                  ((parseFloat(gasPrices["Average"].value) *
+                                    transactionTypes[transactionComplexity]
+                                      .gasLimit) /
+                                    1e9) *
+                                  ethPrice
+                                ).toFixed(2)}
+                                )
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-600">Safe Speed:</span>
+                          <span className="font-medium text-gray-800">
+                            {(
+                              (parseFloat(gasPrices["Safe (Low)"].value) *
+                                transactionTypes[transactionComplexity]
+                                  .gasLimit) /
+                              1e9
+                            ).toFixed(6)}{" "}
+                            ETH
+                            {ethPrice > 0 && (
+                              <span className="text-xs text-gray-500 ml-1">
+                                ($
+                                {(
+                                  ((parseFloat(gasPrices["Safe (Low)"].value) *
+                                    transactionTypes[transactionComplexity]
+                                      .gasLimit) /
+                                    1e9) *
+                                  ethPrice
+                                ).toFixed(2)}
+                                )
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Historical Chart */}
-        <div className="mt-6 bg-white rounded-lg shadow-md p-5 sm:p-6">
-          <h2 className="text-lg sm:text-xl font-semibold mb-4">
+        {/* Historical Chart for Desktop - Full width */}
+        <div className="mt-6 bg-white rounded-xl shadow-md p-6 hidden lg:block">
+          <h2 className="text-xl font-semibold mb-4 flex items-center text-gray-800">
+            <TrendingUp className="mr-2 text-indigo-600" size={20} />
             Gas Price Trends
           </h2>
 
           {historicalData.length > 1 ? (
-            <div className="h-64">
+            <div className="h-80">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart
                   data={historicalData}
-                  margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+                  margin={{ top: 10, right: 30, left: 10, bottom: 10 }}
                 >
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="timestamp" />
-                  <YAxis />
-                  <Tooltip />
-                  <Legend />
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                  <XAxis
+                    dataKey="timestamp"
+                    tickFormatter={formatTimestamp}
+                    tick={{ fontSize: 12 }}
+                  />
+                  <YAxis tick={{ fontSize: 12 }} />
+                  <Tooltip
+                    formatter={(value) => [`${value} Gwei`, ""]}
+                    labelFormatter={(label) => `Time: ${label}`}
+                    contentStyle={{
+                      borderRadius: "6px",
+                      border: "1px solid #e2e8f0",
+                    }}
+                  />
+                  <Legend wrapperStyle={{ paddingTop: "10px" }} />
                   <Line
                     type="monotone"
                     dataKey="safe"
                     stroke="#10B981"
-                    name="Safe (Low)"
+                    name="Safe"
+                    strokeWidth={2}
+                    dot={false}
+                    activeDot={{ r: 6 }}
                   />
                   <Line
                     type="monotone"
                     dataKey="average"
                     stroke="#3B82F6"
                     name="Average"
+                    strokeWidth={2}
+                    dot={false}
+                    activeDot={{ r: 6 }}
                   />
                   <Line
                     type="monotone"
                     dataKey="fast"
                     stroke="#8B5CF6"
                     name="Fast"
+                    strokeWidth={2}
+                    dot={false}
+                    activeDot={{ r: 6 }}
                   />
                 </LineChart>
               </ResponsiveContainer>
             </div>
           ) : (
-            <div className="text-center py-8 text-gray-500">
-              Collecting data for chart... Please wait.
+            <div className="flex items-center justify-center h-80 text-gray-500">
+              <div className="text-center">
+                <RefreshCw className="animate-spin h-8 w-8 mx-auto mb-3 text-blue-500" />
+                <p>Collecting data for chart...</p>
+              </div>
             </div>
           )}
+
+          <div className="mt-4 text-xs text-center text-gray-500">
+            Chart shows recent gas price trends. More historical data will
+            appear as you keep the page open.
+          </div>
+        </div>
+
+        {/* Additional Tips Section */}
+        <div className="mt-6 bg-white rounded-xl shadow-md overflow-hidden">
+          <div className="p-5 border-b border-gray-100">
+            <h2 className="text-xl font-semibold text-gray-800 flex items-center">
+              <Info className="mr-2 text-blue-600" size={20} />
+              Gas Saving Tips
+            </h2>
+          </div>
+          <div className="p-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="bg-blue-50 p-4 rounded-lg border border-blue-100">
+                <h3 className="font-medium text-blue-800 mb-2">
+                  Use Off-Peak Hours
+                </h3>
+                <p className="text-sm text-blue-700">
+                  Transaction fees are typically lower during periods of reduced
+                  network activity, especially during early morning hours (UTC).
+                </p>
+              </div>
+              <div className="bg-purple-50 p-4 rounded-lg border border-purple-100">
+                <h3 className="font-medium text-purple-800 mb-2">
+                  Batch Transactions
+                </h3>
+                <p className="text-sm text-purple-700">
+                  When possible, batch multiple operations into a single
+                  transaction to save on the base fee paid per transaction.
+                </p>
+              </div>
+              <div className="bg-green-50 p-4 rounded-lg border border-green-100">
+                <h3 className="font-medium text-green-800 mb-2">
+                  Layer 2 Solutions
+                </h3>
+                <p className="text-sm text-green-700">
+                  Consider using Layer 2 networks like Optimism, Arbitrum, or
+                  Polygon for significant gas savings on compatible
+                  applications.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-6 text-center text-sm text-gray-500">
+          <p>
+            Last updated:{" "}
+            {lastUpdated ? lastUpdated.toLocaleString() : "Loading..."}
+          </p>
         </div>
       </div>
     </div>
